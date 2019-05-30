@@ -40,27 +40,35 @@ class ClientMethodAssembler implements AssemblerInterface
         $method = $context->getMethod();
         try {
             $phpMethodName = Normalizer::normalizeMethodName($method->getMethodName());
-            $param = $this->createParamsFromContext($context);
             $class->removeMethod($phpMethodName);
-            $docblock = $context->isMultiArgument() ?
-                $this->generateMultiArgumentDocblock($context) :
-                $this->generateSingleArgumentDocblock($context);
+
+            $genArray = [
+                'name' => $phpMethodName,
+                'visibility' => MethodGenerator::VISIBILITY_PUBLIC,
+                'body' => sprintf('return $this->call(\'%s\');', $method->getMethodName()),
+                'returntype' => $method->getNamespacedReturnType(),
+            ];
+
+            if ($context->hasArguments()) {
+                $param = $this->createParamsFromContext($context);
+
+                $genArray['parameters'] = [ $param ];
+
+                $genArray['body'] = sprintf(
+                    'return $this->call(\'%s\', $%s);',
+                    $method->getMethodName(),
+                    $param->getName()
+                );
+
+                $genArray['docblock'] = $context->isMultiArgument() ?
+                    $this->generateMultiArgumentDocblock($context) :
+                    $this->generateSingleArgumentDocblock($context);
+            } else {
+                $genArray['docblock'] = $this->generateNoArgumentDocblock($context);
+            }
 
             $class->addMethodFromGenerator(
-                MethodGenerator::fromArray(
-                    [
-                        'name' => $phpMethodName,
-                        'parameters' => [$param],
-                        'visibility' => MethodGenerator::VISIBILITY_PUBLIC,
-                        'body' => sprintf(
-                            'return $this->call(\'%s\', $%s);',
-                            $method->getMethodName(),
-                            $param->getName()
-                        ),
-                        'returntype' => $method->getNamespacedReturnType(),
-                        'docblock' => $docblock,
-                    ]
-                )
+                MethodGenerator::fromArray($genArray)
             );
         } catch (\Exception $e) {
             throw AssemblerException::fromException($e);
@@ -149,6 +157,44 @@ class ClientMethodAssembler implements AssemblerInterface
                             $param->getName()
                         ),
                     ],
+                    [
+                        'name' => 'return',
+                        'description' => sprintf(
+                            '%s|%s',
+                            $this->generateClassNameAndAddImport(ResultInterface::class, $class),
+                            $this->generateClassNameAndAddImport(
+                                $method->getNamespacedReturnType(),
+                                $class,
+                                true
+                            )
+                        ),
+
+                    ],
+                    [
+                        'name' => 'throws',
+                        'description' => $this->generateClassNameAndAddImport(
+                            SoapException::class,
+                            $class
+                        ),
+                    ],
+                ],
+            ]
+        )->setWordWrap(false);
+    }
+
+    /**
+     * @param ClientMethodContext $context
+     *
+     * @return DocBlockGenerator
+     */
+    private function generateNoArgumentDocblock(ClientMethodContext $context): DocBlockGenerator
+    {
+        $method = $context->getMethod();
+        $class = $context->getClass();
+
+        return DocBlockGeneratorFactory::fromArray(
+            [
+                'tags' => [
                     [
                         'name' => 'return',
                         'description' => sprintf(
